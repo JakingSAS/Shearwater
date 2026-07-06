@@ -9,6 +9,29 @@ library(readr)
 library(zoo)
 library(pastecs)
 
+# read detailed data from Subsurface
+ss_temps <- read_csv('/Users/jking/Projects/Subsurface/Subsurface all.csv') 
+
+# fill in missing values with the last known value
+df_filled <- ss_temps %>%
+  group_by(`dive number`) %>%
+  arrange(time, .by_group = TRUE) %>%
+  mutate(
+    `watertemp [F]` = na.locf(`sample temperature (F)`, na.rm = FALSE)
+  ) %>%
+  ungroup()
+
+# summarize by dive
+dive_summary <- df_filled %>%
+  group_by(`dive number`) %>%
+  summarise(
+    mean_Temp = mean(`watertemp [F]`, na.rm = TRUE),
+    max_Temp  = max(`watertemp [F]`,  na.rm = TRUE),
+    min_Temp  = min(`watertemp [F]`,  na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate_all(~ifelse(is.nan(.), NA, .)) %>%
+  mutate_all(~ifelse(is.infinite(.), NA, .))
 
 # read data from Subsurface
 ss_dives <- read_csv('/Users/jking/Projects/Subsurface/Subsurface summary.csv') %>%
@@ -17,11 +40,24 @@ ss_dives <- read_csv('/Users/jking/Projects/Subsurface/Subsurface summary.csv') 
 ss_dives$month <- format(ss_dives$date, "%B")
 ss_dives$day <- format(ss_dives$date, "%d")
 
-Water <- ss_dives %>%
+# merge the two together
+Water <- left_join(ss_dives, dive_summary) %>%
   group_by(month, day, Location) %>%
-  summarize(mean = mean(`watertemp [F]`),
+  summarize(def = mean(`watertemp [F]`, na.rm = TRUE),
+            Max = max(max_Temp, na.rm = TRUE),
+            Min = min(min_Temp, na.rm = TRUE),
+            Mean = mean(mean_Temp, na.rm = TRUE),
             n = n()) %>%
+  mutate(Max = ifelse(is.infinite(Max), def, Max)) %>%
+  mutate(Min = ifelse(is.infinite(Min), def, Min)) %>%
+  mutate(Mean = ifelse(is.nan(Mean), def, Mean)) %>%
   arrange(Location)
+
+# Water <- ss_dives %>%
+#   group_by(month, day, Location) %>%
+#   summarize(mean = mean(`watertemp [F]`),
+#             n = n()) %>%
+#   arrange(Location)
 
 # read data from Shearwater csv's
 # Function for read a csv passed in, skipping the first two rows
@@ -77,6 +113,9 @@ head <-
 dives2 <- left_join(divesS, head, by = "Dive.Number") %>%
   mutate(Run.Time = Start.Dttm + Time.s) %>%
   arrange(desc(Dive.Number))
+
+write.csv(dives2, "/Users/jking/Library/Mobile Documents/com~apple~CloudDocs/Projects/Diving/Shearwater.csv",
+          row.names = FALSE)
 
 # Step 1: Create a new file for ascent analysis
 temp1 <- dives2 %>%
